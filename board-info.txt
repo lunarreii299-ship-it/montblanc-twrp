@@ -1,0 +1,1 @@
+require board=montblanc3gctc|SM-W2014|MSM8974

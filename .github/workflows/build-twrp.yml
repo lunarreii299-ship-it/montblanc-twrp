@@ -1,0 +1,75 @@
+name: Build TWRP for SM-W2014
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "TWRP minimal-manifest branch (twrp-6.0 or twrp-5.1)"
+        default: "twrp-6.0"
+
+env:
+  MAX_RECOVERY_BYTES: 13631488   # recovery partition size from /proc/partitions
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force || true
+          df -h /
+
+      - name: Build recoveryimage in Ubuntu 18.04 container
+        run: |
+          mkdir -p out
+          cat > build.sh <<'BUILD'
+          set -ex
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update
+          apt-get install -y git-core gnupg flex bison gperf build-essential zip curl zlib1g-dev \
+            gcc-multilib g++-multilib libc6-dev-i386 lib32ncurses5-dev x11proto-core-dev libx11-dev \
+            lib32z-dev libgl1-mesa-dev libxml2-utils xsltproc unzip python openjdk-8-jdk bc rsync \
+            lzop ca-certificates ccache python3
+          git config --global user.name "ci"; git config --global user.email "ci@example.com"
+          git config --global color.ui false
+          curl -sSL https://storage.googleapis.com/git-repo-downloads/repo -o /usr/local/bin/repo
+          chmod +x /usr/local/bin/repo
+          mkdir -p /twrp && cd /twrp
+          repo init --depth=1 -u https://github.com/minimal-manifest-twrp/platform_manifest_twrp_omni.git -b "$BRANCH"
+          repo sync -c -j4 --force-sync --no-clone-bundle --no-tags
+          mkdir -p device/samsung/montblanc3gctc
+          cp -r /src/. device/samsung/montblanc3gctc/
+          rm -rf device/samsung/montblanc3gctc/.git device/samsung/montblanc3gctc/.github
+          export ALLOW_MISSING_DEPENDENCIES=true LC_ALL=C
+          . build/envsetup.sh
+          lunch omni_montblanc3gctc-eng
+          mka recoveryimage -j"$(nproc)"
+          cp out/target/product/montblanc3gctc/recovery.img /out/recovery.img
+          BUILD
+          docker run --rm -e BRANCH="${{ inputs.branch }}" -v "$PWD":/src -v "$PWD/out":/out \
+            ubuntu:18.04 bash /src/build.sh
+
+      - name: Add Samsung footer, check size, make Odin package
+        run: |
+          cd out
+          echo -n SEANDROIDENFORCE >> recovery.img
+          SIZE=$(stat -c %s recovery.img)
+          echo "recovery.img = $SIZE bytes (limit $MAX_RECOVERY_BYTES)"
+          if [ "$SIZE" -gt "$MAX_RECOVERY_BYTES" ]; then
+            echo "::error::recovery.img is too big for the 13 MB recovery partition. Do NOT flash it."
+            exit 1
+          fi
+          tar -H ustar -c recovery.img > TWRP_W2014.tar
+          md5sum -t TWRP_W2014.tar >> TWRP_W2014.tar
+          mv TWRP_W2014.tar TWRP_W2014.tar.md5
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: twrp-sm-w2014
+          path: |
+            out/recovery.img
+            out/TWRP_W2014.tar.md5
