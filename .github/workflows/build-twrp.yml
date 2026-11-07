@@ -33,7 +33,7 @@ jobs:
           apt-get install -y git-core gnupg flex bison gperf build-essential zip curl zlib1g-dev \
             gcc-multilib g++-multilib libc6-dev-i386 lib32ncurses5-dev x11proto-core-dev libx11-dev \
             lib32z-dev libgl1-mesa-dev libxml2-utils xsltproc unzip python openjdk-8-jdk bc rsync \
-            lzop ca-certificates ccache python3 zopfli
+            lzop ca-certificates ccache python3 zopfli cpio
           git config --global user.name "ci"; git config --global user.email "ci@example.com"
           git config --global color.ui false
           curl -sSL https://storage.googleapis.com/git-repo-downloads/repo -o /usr/local/bin/repo
@@ -98,6 +98,33 @@ jobs:
           zopfli --i15 -c /tmp/sel.cpio > /tmp/sel.gz
           MKIMG /tmp/sel.gz /out/recovery_sela_gz.img "$BASE selinux=0 androidboot.selinux=permissive"
           MKIMG /tmp/sel.gz /out/recovery_selb_gz.img "$BASE androidboot.selinux=permissive"
+          # ===== DIAGNOSTIC 1: dump what TWRP's ramdisk looks like =====
+          echo "=== TWRP root top level ==="; ls -la /tmp/tiny | head -50
+          echo "=== TWRP symlinks ==="; find /tmp/tiny -type l -exec ls -l {} + | head -60
+          echo "=== recovery ELF interpreter ==="; readelf -l /tmp/tiny/sbin/recovery | grep -i interp || true
+          echo "=== TWRP init.rc ==="; cat /tmp/tiny/init.rc
+          echo "=== TWRP other rc files ==="; ls /tmp/tiny/*.rc
+          # ===== DIAGNOSTIC 2: stock ramdisk through OUR packaging chain =====
+          MKIMG $D/stock_ramdisk.gz /out/recovery_stock_gz.img
+          gzip -dc $D/stock_ramdisk.gz > /tmp/stock.cpio
+          zopfli --i15 -c /tmp/stock.cpio > /tmp/stock_zop.gz
+          MKIMG /tmp/stock_zop.gz /out/recovery_stock_zop.img
+          # ===== HYBRID: stock (4.3) init + policy + init.rc, TWRP binaries/resources =====
+          ST=/tmp/stockrd; rm -rf $ST; mkdir -p $ST
+          (cd $ST && gzip -dc /src/stock_ramdisk.gz | cpio -id --no-absolute-filenames)
+          H=/tmp/hyb; rm -rf $H; cp -a $ST $H
+          cp -a /tmp/sel/twres $H/
+          cp -a /tmp/sel/sbin/. $H/sbin/
+          rm -f $H/sbin/ueventd; cp -a $ST/sbin/ueventd $H/sbin/ueventd
+          mkdir -p $H/system && cp -a /tmp/sel/system/. $H/system/
+          [ -e $H/system/bin/linker ] || { mkdir -p $H/system/bin; ln -s /sbin/linker $H/system/bin/linker; }
+          cp -a /tmp/sel/etc/. $H/etc/ || true
+          sed -i 's|^\( *export PATH .*\)$|\1\n    export LD_LIBRARY_PATH .:/sbin|' $H/init.rc
+          sed -i 's/^ro.debuggable=0/ro.debuggable=1/; s/^ro.secure=1/ro.secure=0/' $H/default.prop
+          echo "=== hybrid init.rc ==="; cat $H/init.rc
+          $MKB/mkbootfs $H > /tmp/hyb.cpio
+          zopfli --i15 -c /tmp/hyb.cpio > /tmp/hyb.gz
+          MKIMG /tmp/hyb.gz /out/recovery_hyb_gz.img "$BASE androidboot.selinux=permissive"
           ls -l /tmp/*.cpio /tmp/*.gz /out
           BUILD
           docker run --rm -e BRANCH="${{ inputs.branch }}" -v "$PWD":/src -v "$PWD/out":/out \
@@ -107,7 +134,7 @@ jobs:
         run: |
           sudo chown -R "$(id -u):$(id -g)" out
           cd out
-          for v in tiny_gz sela_gz selb_gz; do
+          for v in stock_gz stock_zop hyb_gz sela_gz; do
             [ -f recovery_$v.img ] || continue
             echo -n SEANDROIDENFORCE >> recovery_$v.img
             SIZE=$(stat -c %s recovery_$v.img)
