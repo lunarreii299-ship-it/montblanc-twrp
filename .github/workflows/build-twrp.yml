@@ -119,12 +119,18 @@ jobs:
           mkdir -p $H/system && cp -a /tmp/sel/system/. $H/system/
           [ -e $H/system/bin/linker ] || { mkdir -p $H/system/bin; ln -s /sbin/linker $H/system/bin/linker; }
           cp -a /tmp/sel/etc/. $H/etc/ || true
+          # slim: drop stock recovery UI images and other leftovers, use TWRP's res
+          rm -rf $H/res && cp -a /tmp/sel/res $H/res
+          rm -f $H/charger $H/initlogo.rle $H/fstab.goldfish $H/ueventd.goldfish.rc $H/init.qcom.factory.sh
+          rm -f $H/sbin/cbd $H/sbin/ffu $H/sbin/security_boot_check $H/sbin/watchdogd
+          du -sh $H $H/sbin $H/twres $H/res || true
           sed -i 's|^\( *export PATH .*\)$|\1\n    export LD_LIBRARY_PATH .:/sbin|' $H/init.rc
           sed -i 's/^ro.debuggable=0/ro.debuggable=1/; s/^ro.secure=1/ro.secure=0/' $H/default.prop
           echo "=== hybrid init.rc ==="; cat $H/init.rc
           $MKB/mkbootfs $H > /tmp/hyb.cpio
           zopfli --i15 -c /tmp/hyb.cpio > /tmp/hyb.gz
           MKIMG /tmp/hyb.gz /out/recovery_hyb_gz.img "$BASE androidboot.selinux=permissive"
+          MKIMG /tmp/hyb.gz /out/recovery_hybn_gz.img
           ls -l /tmp/*.cpio /tmp/*.gz /out
           BUILD
           docker run --rm -e BRANCH="${{ inputs.branch }}" -v "$PWD":/src -v "$PWD/out":/out \
@@ -134,7 +140,7 @@ jobs:
         run: |
           sudo chown -R "$(id -u):$(id -g)" out
           cd out
-          for v in stock_gz stock_zop hyb_gz sela_gz; do
+          for v in stock_zop hyb_gz hybn_gz; do
             [ -f recovery_$v.img ] || continue
             echo -n SEANDROIDENFORCE >> recovery_$v.img
             SIZE=$(stat -c %s recovery_$v.img)
