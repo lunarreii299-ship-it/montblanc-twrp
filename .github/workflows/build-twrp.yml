@@ -47,7 +47,7 @@ jobs:
           export ALLOW_MISSING_DEPENDENCIES=true LC_ALL=C
           . build/envsetup.sh
           lunch omni_montblanc3gctc-eng
-          mka recoveryimage -j"$(nproc)"
+          make -j"$(nproc)" recoveryimage
           cp out/target/product/montblanc3gctc/recovery.img /out/recovery.img
           BUILD
           docker run --rm -e BRANCH="${{ inputs.branch }}" -v "$PWD":/src -v "$PWD/out":/out \
