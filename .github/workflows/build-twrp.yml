@@ -162,6 +162,5 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: twrp-sm-w2014
-          path: |
-            out/recovery_*.img
-            out/TWRP_W2014_*.tar.md5
+          path: out/TWRP_W2014_*.tar.md5
+          compression-level: 0
