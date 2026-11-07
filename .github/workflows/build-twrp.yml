@@ -57,7 +57,8 @@ jobs:
           (cd $P/recovery/root && du -ab . | sort -rn | head -40)
           $MKB/mkbootfs $P/recovery/root > /tmp/rd.cpio
           gzip -9 -c /tmp/rd.cpio > /tmp/rd.gz
-          xz --format=lzma -9e -c /tmp/rd.cpio > /tmp/rd.lzma
+          xz --format=lzma --lzma1=preset=9e,dict=16MiB -c /tmp/rd.cpio > /tmp/rd.lzma
+          python3 -c "import sys,struct,os;d=bytearray(open(sys.argv[2],'rb').read());d[5:13]=struct.pack('<Q',os.path.getsize(sys.argv[1]));open(sys.argv[2],'wb').write(d)" /tmp/rd.cpio /tmp/rd.lzma
           ls -l /tmp/rd.cpio /tmp/rd.gz /tmp/rd.lzma
           for v in gz lzma; do
             $MKB/mkbootimg --kernel $D/kernel --ramdisk /tmp/rd.$v --dt $D/dt.img \
@@ -72,7 +73,8 @@ jobs:
           find /tmp/slim/twres/languages -type f ! -name 'en.xml' -delete || true
           $MKB/mkbootfs /tmp/slim > /tmp/slim.cpio
           gzip -9 -c /tmp/slim.cpio > /tmp/slim.gz
-          xz --format=lzma -9e -c /tmp/slim.cpio > /tmp/slim.lzma
+          xz --format=lzma --lzma1=preset=9e,dict=16MiB -c /tmp/slim.cpio > /tmp/slim.lzma
+          python3 -c "import sys,struct,os;d=bytearray(open(sys.argv[2],'rb').read());d[5:13]=struct.pack('<Q',os.path.getsize(sys.argv[1]));open(sys.argv[2],'wb').write(d)" /tmp/slim.cpio /tmp/slim.lzma
           ls -l /tmp/slim.cpio /tmp/slim.gz /tmp/slim.lzma
           for v in gz lzma; do
             $MKB/mkbootimg --kernel $D/kernel --ramdisk /tmp/slim.$v --dt $D/dt.img \
