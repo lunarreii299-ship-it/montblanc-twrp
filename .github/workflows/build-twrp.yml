@@ -59,7 +59,7 @@ jobs:
             $MKB/mkbootimg --kernel $D/kernel --ramdisk "$1" --dt $D/dt.img \
               --base 0x00000000 --pagesize 2048 --kernel_offset 0x00008000 \
               --ramdisk_offset 0x02000000 --tags_offset 0x01e00000 \
-              --cmdline "console=null androidboot.hardware=qcom user_debug=31 msm_rtb.filter=0x3F" -o "$2"
+              --cmdline "${3:-console=null androidboot.hardware=qcom user_debug=31 msm_rtb.filter=0x3F}" -o "$2"
           }
           needed_by() { # list ELF files that need library $1
             for f in $(find "$2" -type f); do
@@ -89,6 +89,15 @@ jobs:
           $MKB/mkbootfs /tmp/tiny > /tmp/tiny.cpio
           zopfli --i15 -c /tmp/tiny.cpio > /tmp/tiny.gz
           MKIMG /tmp/tiny.gz /out/recovery_tiny_gz.img
+          # --- SELinux workarounds (kernel only knows policy v26; TWRP 6.0 builds a newer one) ---
+          python3 -c "import struct,sys;b=open(sys.argv[1],'rb').read();l=struct.unpack('<I',b[4:8])[0];print(sys.argv[1],'policy version',struct.unpack('<I',b[8+l:12+l])[0])" /tmp/tiny/sepolicy
+          python3 -c "import struct,sys;b=open(sys.argv[1],'rb').read();l=struct.unpack('<I',b[4:8])[0];print(sys.argv[1],'policy version',struct.unpack('<I',b[8+l:12+l])[0])" $D/stock_sepolicy
+          BASE="console=null androidboot.hardware=qcom user_debug=31 msm_rtb.filter=0x3F"
+          rm -rf /tmp/sel && cp -a /tmp/tiny /tmp/sel && cp $D/stock_sepolicy /tmp/sel/sepolicy
+          $MKB/mkbootfs /tmp/sel > /tmp/sel.cpio
+          zopfli --i15 -c /tmp/sel.cpio > /tmp/sel.gz
+          MKIMG /tmp/sel.gz /out/recovery_sela_gz.img "$BASE selinux=0 androidboot.selinux=permissive"
+          MKIMG /tmp/sel.gz /out/recovery_selb_gz.img "$BASE androidboot.selinux=permissive"
           ls -l /tmp/*.cpio /tmp/*.gz /out
           BUILD
           docker run --rm -e BRANCH="${{ inputs.branch }}" -v "$PWD":/src -v "$PWD/out":/out \
@@ -98,7 +107,7 @@ jobs:
         run: |
           sudo chown -R "$(id -u):$(id -g)" out
           cd out
-          for v in gz slim_gz tiny_gz; do
+          for v in tiny_gz sela_gz selb_gz; do
             [ -f recovery_$v.img ] || continue
             echo -n SEANDROIDENFORCE >> recovery_$v.img
             SIZE=$(stat -c %s recovery_$v.img)
