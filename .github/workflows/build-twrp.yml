@@ -118,6 +118,11 @@ jobs:
           rm -f $H/sbin/ueventd; cp -a $ST/sbin/ueventd $H/sbin/ueventd
           mkdir -p $H/system && cp -a /tmp/sel/system/. $H/system/
           [ -e $H/system/bin/linker ] || { mkdir -p $H/system/bin; ln -s /sbin/linker $H/system/bin/linker; }
+          # make shells spawned by adbd find the libs even without LD_LIBRARY_PATH
+          mkdir -p $H/system/bin
+          [ -e $H/system/lib ] || ln -s /sbin $H/system/lib
+          [ -e $H/system/bin/sh ] || ln -s /sbin/sh $H/system/bin/sh
+          ls -l $H/system $H/system/bin | head -20
           cp -a /tmp/sel/etc/. $H/etc/ || true
           # slim: drop stock recovery UI images and other leftovers, use TWRP's res
           rm -rf $H/res && cp -a /tmp/sel/res $H/res
