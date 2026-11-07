@@ -33,7 +33,7 @@ jobs:
           apt-get install -y git-core gnupg flex bison gperf build-essential zip curl zlib1g-dev \
             gcc-multilib g++-multilib libc6-dev-i386 lib32ncurses5-dev x11proto-core-dev libx11-dev \
             lib32z-dev libgl1-mesa-dev libxml2-utils xsltproc unzip python openjdk-8-jdk bc rsync \
-            lzop ca-certificates ccache python3 xz-utils lzma
+            lzop ca-certificates ccache python3 zopfli
           git config --global user.name "ci"; git config --global user.email "ci@example.com"
           git config --global color.ui false
           curl -sSL https://storage.googleapis.com/git-repo-downloads/repo -o /usr/local/bin/repo
@@ -55,35 +55,40 @@ jobs:
           MKB=out/host/linux-x86/bin
           echo "=== biggest files in recovery ramdisk ==="
           (cd $P/recovery/root && du -ab . | sort -rn | head -40)
-          $MKB/mkbootfs $P/recovery/root > /tmp/rd.cpio
-          gzip -9 -c /tmp/rd.cpio > /tmp/rd.gz
-          xz --format=lzma --lzma1=preset=9e,dict=16MiB -c /tmp/rd.cpio > /tmp/rd.lzma
-          python3 -c "import sys,struct,os;d=bytearray(open(sys.argv[2],'rb').read());d[5:13]=struct.pack('<Q',os.path.getsize(sys.argv[1]));open(sys.argv[2],'wb').write(d)" /tmp/rd.cpio /tmp/rd.lzma
-          ls -l /tmp/rd.cpio /tmp/rd.gz /tmp/rd.lzma
-          for v in gz lzma; do
-            $MKB/mkbootimg --kernel $D/kernel --ramdisk /tmp/rd.$v --dt $D/dt.img \
+          MKIMG() { # $1=ramdisk.gz  $2=output.img
+            $MKB/mkbootimg --kernel $D/kernel --ramdisk "$1" --dt $D/dt.img \
               --base 0x00000000 --pagesize 2048 --kernel_offset 0x00008000 \
               --ramdisk_offset 0x02000000 --tags_offset 0x01e00000 \
-              --cmdline "console=null androidboot.hardware=qcom user_debug=31 msm_rtb.filter=0x3F" \
-              -o /out/recovery_$v.img
-          done
-          # Slim variants: drop terminfo, non-English languages, zoneinfo
+              --cmdline "console=null androidboot.hardware=qcom user_debug=31 msm_rtb.filter=0x3F" -o "$2"
+          }
+          needed_by() { # list ELF files that need library $1
+            for f in $(find "$2" -type f); do
+              readelf -d "$f" 2>/dev/null | grep -q "NEEDED.*\[$1\]" && echo "$f"
+            done
+          }
+          # --- full ---
+          $MKB/mkbootfs $P/recovery/root > /tmp/rd.cpio
+          zopfli --i15 -c /tmp/rd.cpio > /tmp/rd.gz
+          MKIMG /tmp/rd.gz /out/recovery_gz.img
+          # --- slim: drop terminfo, non-English languages, zoneinfo ---
           rm -rf /tmp/slim && cp -a $P/recovery/root /tmp/slim
           rm -rf /tmp/slim/sbin/etc/terminfo /tmp/slim/system/usr/share/zoneinfo
           find /tmp/slim/twres/languages -type f ! -name 'en.xml' -delete || true
           $MKB/mkbootfs /tmp/slim > /tmp/slim.cpio
-          gzip -9 -c /tmp/slim.cpio > /tmp/slim.gz
-          xz --format=lzma --lzma1=preset=9e,dict=16MiB -c /tmp/slim.cpio > /tmp/slim.lzma
-          python3 -c "import sys,struct,os;d=bytearray(open(sys.argv[2],'rb').read());d[5:13]=struct.pack('<Q',os.path.getsize(sys.argv[1]));open(sys.argv[2],'wb').write(d)" /tmp/slim.cpio /tmp/slim.lzma
-          ls -l /tmp/slim.cpio /tmp/slim.gz /tmp/slim.lzma
-          for v in gz lzma; do
-            $MKB/mkbootimg --kernel $D/kernel --ramdisk /tmp/slim.$v --dt $D/dt.img \
-              --base 0x00000000 --pagesize 2048 --kernel_offset 0x00008000 \
-              --ramdisk_offset 0x02000000 --tags_offset 0x01e00000 \
-              --cmdline "console=null androidboot.hardware=qcom user_debug=31 msm_rtb.filter=0x3F" \
-              -o /out/recovery_slim_$v.img
+          zopfli --i15 -c /tmp/slim.cpio > /tmp/slim.gz
+          MKIMG /tmp/slim.gz /out/recovery_slim_gz.img
+          # --- tiny: slim minus bash, healthd, e2fsck, and libssh/libssl if unused ---
+          rm -rf /tmp/tiny && cp -a /tmp/slim /tmp/tiny
+          rm -f /tmp/tiny/sbin/bash /tmp/tiny/sbin/healthd /tmp/tiny/sbin/e2fsck
+          for lib in libssh.so libssl.so; do
+            users=$(needed_by $lib /tmp/tiny)
+            echo "users of $lib: [$users]"
+            [ -z "$users" ] && rm -f /tmp/tiny/sbin/$lib
           done
-          ls -l /out
+          $MKB/mkbootfs /tmp/tiny > /tmp/tiny.cpio
+          zopfli --i15 -c /tmp/tiny.cpio > /tmp/tiny.gz
+          MKIMG /tmp/tiny.gz /out/recovery_tiny_gz.img
+          ls -l /tmp/*.cpio /tmp/*.gz /out
           BUILD
           docker run --rm -e BRANCH="${{ inputs.branch }}" -v "$PWD":/src -v "$PWD/out":/out \
             ubuntu:18.04 bash /src/build.sh
@@ -92,7 +97,7 @@ jobs:
         run: |
           sudo chown -R "$(id -u):$(id -g)" out
           cd out
-          for v in gz lzma slim_gz slim_lzma; do
+          for v in gz slim_gz tiny_gz; do
             [ -f recovery_$v.img ] || continue
             echo -n SEANDROIDENFORCE >> recovery_$v.img
             SIZE=$(stat -c %s recovery_$v.img)
