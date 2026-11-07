@@ -53,7 +53,6 @@ TW_NO_USB_STORAGE := false
 TW_EXCLUDE_SUPERSU := true
 # Size savers (recovery partition is only 13 MB)
 TW_EXCLUDE_ENCRYPTED_BACKUPS := true
-TW_DISABLE_TTF := true
 RECOVERY_SDCARD_ON_DATA := true
 TW_EXTERNAL_STORAGE_PATH := "/external_sd"
 TW_EXTERNAL_STORAGE_MOUNT_POINT := "external_sd"
