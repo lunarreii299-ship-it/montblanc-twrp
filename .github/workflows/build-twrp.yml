@@ -47,29 +47,55 @@ jobs:
           export ALLOW_MISSING_DEPENDENCIES=true LC_ALL=C
           . build/envsetup.sh
           lunch omni_montblanc3gctc-eng
+          set +e
           make -j"$(nproc)" recoveryimage
-          cp out/target/product/montblanc3gctc/recovery.img /out/recovery.img
+          set -e
+          P=out/target/product/montblanc3gctc
+          D=device/samsung/montblanc3gctc
+          MKB=out/host/linux-x86/bin
+          echo "=== biggest files in recovery ramdisk ==="
+          (cd $P/recovery/root && du -ab . | sort -rn | head -40)
+          $MKB/mkbootfs $P/recovery/root > /tmp/rd.cpio
+          gzip -9 -c /tmp/rd.cpio > /tmp/rd.gz
+          lzma -9e -c /tmp/rd.cpio > /tmp/rd.lzma
+          ls -l /tmp/rd.cpio /tmp/rd.gz /tmp/rd.lzma
+          for v in gz lzma; do
+            $MKB/mkbootimg --kernel $D/kernel --ramdisk /tmp/rd.$v --dt $D/dt.img \
+              --base 0x00000000 --pagesize 2048 --kernel_offset 0x00008000 \
+              --ramdisk_offset 0x02000000 --tags_offset 0x01e00000 \
+              --cmdline "console=null androidboot.hardware=qcom user_debug=31 msm_rtb.filter=0x3F" \
+              -o /out/recovery_$v.img
+          done
+          ls -l /out
           BUILD
           docker run --rm -e BRANCH="${{ inputs.branch }}" -v "$PWD":/src -v "$PWD/out":/out \
             ubuntu:18.04 bash /src/build.sh
 
-      - name: Add Samsung footer, check size, make Odin package
+      - name: Add Samsung footer, check size, make Odin packages
         run: |
           cd out
-          echo -n SEANDROIDENFORCE >> recovery.img
-          SIZE=$(stat -c %s recovery.img)
-          echo "recovery.img = $SIZE bytes (limit $MAX_RECOVERY_BYTES)"
-          if [ "$SIZE" -gt "$MAX_RECOVERY_BYTES" ]; then
-            echo "::error::recovery.img is too big for the 13 MB recovery partition. Do NOT flash it."
-            exit 1
-          fi
-          tar -H ustar -c recovery.img > TWRP_W2014.tar
-          md5sum -t TWRP_W2014.tar >> TWRP_W2014.tar
-          mv TWRP_W2014.tar TWRP_W2014.tar.md5
+          for v in gz lzma; do
+            [ -f recovery_$v.img ] || continue
+            echo -n SEANDROIDENFORCE >> recovery_$v.img
+            SIZE=$(stat -c %s recovery_$v.img)
+            echo "recovery_$v.img = $SIZE bytes (limit $MAX_RECOVERY_BYTES)"
+            if [ "$SIZE" -le "$MAX_RECOVERY_BYTES" ]; then
+              echo "FITS: recovery_$v.img"
+              mkdir -p pkg_$v && cp recovery_$v.img pkg_$v/recovery.img
+              (cd pkg_$v && tar -H ustar -c recovery.img > ../TWRP_W2014_$v.tar \
+                && cd .. && md5sum -t TWRP_W2014_$v.tar >> TWRP_W2014_$v.tar \
+                && mv TWRP_W2014_$v.tar TWRP_W2014_$v.tar.md5)
+            else
+              echo "TOO BIG: recovery_$v.img, do NOT flash"
+              rm -f recovery_$v.img
+            fi
+          done
+          ls -l
+          ls TWRP_W2014_*.tar.md5 || { echo "::error::No image fits the 13 MB recovery partition."; exit 1; }
 
       - uses: actions/upload-artifact@v4
         with:
           name: twrp-sm-w2014
           path: |
-            out/recovery.img
-            out/TWRP_W2014.tar.md5
+            out/recovery_*.img
+            out/TWRP_W2014_*.tar.md5
