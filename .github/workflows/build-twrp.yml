@@ -66,6 +66,21 @@ jobs:
               --cmdline "console=null androidboot.hardware=qcom user_debug=31 msm_rtb.filter=0x3F" \
               -o /out/recovery_$v.img
           done
+          # Slim variants: drop terminfo, non-English languages, zoneinfo
+          rm -rf /tmp/slim && cp -a $P/recovery/root /tmp/slim
+          rm -rf /tmp/slim/sbin/etc/terminfo /tmp/slim/system/usr/share/zoneinfo
+          find /tmp/slim/twres/languages -type f ! -name 'en.xml' -delete || true
+          $MKB/mkbootfs /tmp/slim > /tmp/slim.cpio
+          gzip -9 -c /tmp/slim.cpio > /tmp/slim.gz
+          xz --format=lzma -9e -c /tmp/slim.cpio > /tmp/slim.lzma
+          ls -l /tmp/slim.cpio /tmp/slim.gz /tmp/slim.lzma
+          for v in gz lzma; do
+            $MKB/mkbootimg --kernel $D/kernel --ramdisk /tmp/slim.$v --dt $D/dt.img \
+              --base 0x00000000 --pagesize 2048 --kernel_offset 0x00008000 \
+              --ramdisk_offset 0x02000000 --tags_offset 0x01e00000 \
+              --cmdline "console=null androidboot.hardware=qcom user_debug=31 msm_rtb.filter=0x3F" \
+              -o /out/recovery_slim_$v.img
+          done
           ls -l /out
           BUILD
           docker run --rm -e BRANCH="${{ inputs.branch }}" -v "$PWD":/src -v "$PWD/out":/out \
@@ -73,8 +88,9 @@ jobs:
 
       - name: Add Samsung footer, check size, make Odin packages
         run: |
+          sudo chown -R "$(id -u):$(id -g)" out
           cd out
-          for v in gz lzma; do
+          for v in gz lzma slim_gz slim_lzma; do
             [ -f recovery_$v.img ] || continue
             echo -n SEANDROIDENFORCE >> recovery_$v.img
             SIZE=$(stat -c %s recovery_$v.img)
