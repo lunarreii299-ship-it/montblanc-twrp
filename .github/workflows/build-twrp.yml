@@ -140,7 +140,7 @@ jobs:
         run: |
           sudo chown -R "$(id -u):$(id -g)" out
           cd out
-          for v in stock_zop hyb_gz hybn_gz; do
+          for v in hyb_gz hybn_gz; do
             [ -f recovery_$v.img ] || continue
             echo -n SEANDROIDENFORCE >> recovery_$v.img
             SIZE=$(stat -c %s recovery_$v.img)
