@@ -188,6 +188,8 @@ jobs:
           DIAG
           chmod 755 $H/sbin/diag.sh
           printf '\nservice diag /sbin/busybox sh /sbin/diag.sh\n    oneshot\n' >> $H/init.rc
+          # let TWRP's reboot/shutdown requests actually reach the kernel (the 4.3 init handles this builtin)
+          printf '\non property:sys.powerctl=*\n    powerctl ${sys.powerctl}\n' >> $H/init.rc
           echo "=== hybrid init.rc ==="; cat $H/init.rc
           $MKB/mkbootfs $H > /tmp/hyb.cpio
           zopfli --i15 -c /tmp/hyb.cpio > /tmp/hyb.gz
