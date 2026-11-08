@@ -132,6 +132,32 @@ jobs:
           sed -i 's|^\( *export PATH .*\)$|\1\n    export LD_LIBRARY_PATH .:/sbin|' $H/init.rc
           sed -i 's/^ro.debuggable=0/ro.debuggable=1/; s/^ro.secure=1/ro.secure=0/; s/^ro.adb.secure=1/ro.adb.secure=0/' $H/default.prop
           grep -n 'secure\|debuggable' $H/default.prop || true
+          # ===== make sure every shared library the binaries NEED is really in /sbin =====
+          rm -f $H/sbin/nano $H/sbin/libssh.so $H/sbin/libssl.so
+          STRIP=$(find /twrp/prebuilts -name 'arm-linux-androideabi-strip' -type f 2>/dev/null | head -1)
+          echo "STRIP tool: [$STRIP]"
+          for pass in 1 2 3; do
+            for f in $(find $H/sbin -maxdepth 1 -type f); do
+              for lib in $(readelf -d "$f" 2>/dev/null | sed -n 's/.*NEEDED.*\[\(.*\)\]/\1/p'); do
+                if [ ! -e "$H/sbin/$lib" ]; then
+                  src=$(find $P/system/lib $P/obj/lib $P/symbols/system/lib -name "$lib" -type f 2>/dev/null | head -1)
+                  echo "MISSING LIB: $lib (needed by $f) -> source: [$src]"
+                  if [ -n "$src" ]; then
+                    cp "$src" "$H/sbin/$lib"
+                    [ -n "$STRIP" ] && "$STRIP" --strip-unneeded "$H/sbin/$lib" || true
+                  fi
+                fi
+              done
+            done
+          done
+          echo "=== library check after fixing ==="
+          for f in $(find $H/sbin -maxdepth 1 -type f); do
+            for lib in $(readelf -d "$f" 2>/dev/null | sed -n 's/.*NEEDED.*\[\(.*\)\]/\1/p'); do
+              [ -e "$H/sbin/$lib" ] || echo "STILL MISSING: $lib (needed by $f)"
+            done
+          done
+          readelf -d $H/sbin/recovery | grep NEEDED
+          ls -l $H/sbin/libcrypto.so || true
           # ===== static busybox (needs no libc.so) so adb shell works; plus a self-writing diag report =====
           if curl -fsSL -o /tmp/busybox_static https://busybox.net/downloads/binaries/1.31.0-defconfig-multiarch-musl/busybox-armv7l \
              && [ "$(stat -c %s /tmp/busybox_static)" -gt 500000 ]; then
@@ -166,7 +192,6 @@ jobs:
           $MKB/mkbootfs $H > /tmp/hyb.cpio
           zopfli --i15 -c /tmp/hyb.cpio > /tmp/hyb.gz
           MKIMG /tmp/hyb.gz /out/recovery_hyb_gz.img "$BASE androidboot.selinux=permissive"
-          MKIMG /tmp/hyb.gz /out/recovery_hybn_gz.img
           ls -l /tmp/*.cpio /tmp/*.gz /out
           BUILD
           docker run --rm -e BRANCH="${{ inputs.branch }}" -v "$PWD":/src -v "$PWD/out":/out \
@@ -176,7 +201,7 @@ jobs:
         run: |
           sudo chown -R "$(id -u):$(id -g)" out
           cd out
-          for v in hyb_gz hybn_gz; do
+          for v in hyb_gz; do
             [ -f recovery_$v.img ] || continue
             echo -n SEANDROIDENFORCE >> recovery_$v.img
             SIZE=$(stat -c %s recovery_$v.img)
@@ -184,19 +209,17 @@ jobs:
             if [ "$SIZE" -le "$MAX_RECOVERY_BYTES" ]; then
               echo "FITS: recovery_$v.img"
               mkdir -p pkg_$v && cp recovery_$v.img pkg_$v/recovery.img
-              (cd pkg_$v && tar -H ustar -c recovery.img > ../TWRP_W2014_$v.tar \
-                && cd .. && md5sum -t TWRP_W2014_$v.tar >> TWRP_W2014_$v.tar \
-                && mv TWRP_W2014_$v.tar TWRP_W2014_$v.tar.md5)
+              (cd pkg_$v && tar -H ustar -c recovery.img > ../TWRP_W2014_$v.tar)
             else
               echo "TOO BIG: recovery_$v.img, do NOT flash"
               rm -f recovery_$v.img
             fi
           done
           ls -l
-          ls TWRP_W2014_*.tar.md5 || { echo "::error::No image fits the 13 MB recovery partition."; exit 1; }
+          ls TWRP_W2014_*.tar || { echo "::error::No image fits the 13 MB recovery partition."; exit 1; }
 
       - uses: actions/upload-artifact@v4
         with:
           name: twrp-sm-w2014
-          path: out/TWRP_W2014_*.tar.md5
+          path: out/TWRP_W2014_*.tar
           compression-level: 0
