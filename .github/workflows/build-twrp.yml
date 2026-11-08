@@ -188,6 +188,22 @@ jobs:
           DIAG
           chmod 755 $H/sbin/diag.sh
           printf '\nservice diag /sbin/busybox sh /sbin/diag.sh\n    oneshot\n' >> $H/init.rc
+          # wait for the eMMC partition links to exist before starting TWRP (fixes "no storage on first start")
+          cat > $H/sbin/start_recovery.sh <<'WAITRC'
+          #!/sbin/busybox sh
+          i=0
+          while [ ! -e /dev/block/platform/msm_sdcc.1/by-name/userdata ] && [ $i -lt 30 ]; do
+            sleep 1
+            i=$((i+1))
+          done
+          echo "waited ${i}s for userdata link" > /tmp/start_recovery.log
+          ls -l /dev/block/platform/msm_sdcc.1/by-name/ >> /tmp/start_recovery.log 2>&1
+          sleep 1
+          exec /sbin/recovery
+          WAITRC
+          chmod 755 $H/sbin/start_recovery.sh
+          sed -i 's|^service recovery /sbin/recovery$|service recovery /sbin/busybox sh /sbin/start_recovery.sh|' $H/init.rc
+          grep -n 'service recovery' $H/init.rc
           # let TWRP's reboot/shutdown requests actually reach the kernel (the 4.3 init handles this builtin)
           printf '\non property:sys.powerctl=*\n    powerctl ${sys.powerctl}\n' >> $H/init.rc
           echo "=== hybrid init.rc ==="; cat $H/init.rc
