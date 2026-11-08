@@ -132,6 +132,36 @@ jobs:
           sed -i 's|^\( *export PATH .*\)$|\1\n    export LD_LIBRARY_PATH .:/sbin|' $H/init.rc
           sed -i 's/^ro.debuggable=0/ro.debuggable=1/; s/^ro.secure=1/ro.secure=0/; s/^ro.adb.secure=1/ro.adb.secure=0/' $H/default.prop
           grep -n 'secure\|debuggable' $H/default.prop || true
+          # ===== static busybox (needs no libc.so) so adb shell works; plus a self-writing diag report =====
+          if curl -fsSL -o /tmp/busybox_static https://busybox.net/downloads/binaries/1.31.0-defconfig-multiarch-musl/busybox-armv7l \
+             && [ "$(stat -c %s /tmp/busybox_static)" -gt 500000 ]; then
+            file /tmp/busybox_static || true
+            cp /tmp/busybox_static $H/sbin/busybox && chmod 755 $H/sbin/busybox
+            echo "STATIC BUSYBOX INSTALLED"
+          else
+            echo "WARNING: could not download static busybox"
+          fi
+          cat > $H/sbin/diag.sh <<'DIAG'
+          #!/sbin/busybox sh
+          export PATH=/sbin:/system/bin
+          for i in 1 2 3 4; do
+            sleep 12
+            {
+              echo "=== diag $i $(date)"
+              echo "--- ps"; ps
+              echo "--- env of recovery/adbd"
+              for p in $(pidof recovery adbd); do echo "pid $p"; tr '\0' '\n' < /proc/$p/environ | head -30; done
+              echo "--- dmesg tail"; dmesg | tail -n 150
+              echo "--- ls /tmp"; ls -l /tmp
+              echo "--- recovery.log"; cat /tmp/recovery.log
+              echo "--- libs"; ls -l /sbin/libc.so /sbin/linker /system /system/bin /system/lib
+              echo "--- fb"; ls -l /dev/graphics /dev/fb0; cat /sys/class/graphics/fb0/modes /sys/class/graphics/fb0/bits_per_pixel /sys/class/graphics/fb0/virtual_size
+              if [ "$i" = 2 ]; then echo "--- manual recovery run"; LD_LIBRARY_PATH=/sbin timeout 6 /sbin/recovery 2>&1 | head -60; fi
+            } > /tmp/diag_$i.txt 2>&1
+          done
+          DIAG
+          chmod 755 $H/sbin/diag.sh
+          printf '\nservice diag /sbin/busybox sh /sbin/diag.sh\n    oneshot\n' >> $H/init.rc
           echo "=== hybrid init.rc ==="; cat $H/init.rc
           $MKB/mkbootfs $H > /tmp/hyb.cpio
           zopfli --i15 -c /tmp/hyb.cpio > /tmp/hyb.gz
